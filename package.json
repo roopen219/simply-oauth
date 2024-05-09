@@ -5,7 +5,7 @@
     "directories": {
         "lib": "./src"
     },
-    "main": "index.js",
+    "main": "index.ts",
     "scripts": {
         "test": "jest"
     },

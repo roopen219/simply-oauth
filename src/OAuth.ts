@@ -1,4 +1,5 @@
-import * as crypto from 'node:crypto';
+// import * as crypto from 'node:crypto';
+import sha1 from 'crypto-js/sha1';
 import {
     GenericObject,
     OAuthResponse,
@@ -138,7 +139,9 @@ export default class OAuth {
             hash = crypto.createSign('RSA-SHA1').update(signatureBase).sign(key, 'base64');
         }
         else {
-            hash = crypto.createHmac('sha1', key).update(signatureBase).digest('base64');
+          hash = sha1(signatureBase, key);
+          console.log(hash)
+            // hash = crypto.createHmac('sha1', key).update(signatureBase).digest('base64');
         }
         return hash;
     }

@@ -4,6 +4,71 @@ export interface GenericObject {
     [index: string]: any,
 }
 
+export function arrayBufferToBase64(buffer: ArrayBuffer, urlSafe = false) {
+  let binary = ''
+  const bytes = new Uint8Array(buffer)
+  const len = bytes.byteLength
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  if (urlSafe) {
+    return btoa(binary)
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+  }
+  return btoa(binary)
+}
+
+export function base64ToArrayBuffer(base64: string) {
+  const binary_string = atob(base64)
+  const len = binary_string.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary_string.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
+export async function hashString(
+  str: string,
+  signingKey: string,
+  urlSafe = false,
+  stringType = 'base64',
+  algorithm = 'SHA-256'
+) {
+  const encodedToken = new TextEncoder().encode(str)
+  const signingKeyBuffer = new TextEncoder().encode(signingKey)
+  const key = await crypto.subtle.importKey(
+    'raw',
+    signingKeyBuffer,
+    { name: 'HMAC', hash: algorithm },
+    false,
+    ['sign']
+  )
+  const hashedToken = await crypto.subtle.sign('HMAC', key, encodedToken)
+
+  if (stringType === 'hex') {
+    return Array.from(new Uint8Array(hashedToken))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+  }
+
+  return arrayBufferToBase64(hashedToken, urlSafe)
+}
+
+export async function sha1(str: string) {
+  const hash = await crypto.subtle.digest(
+    {
+      name: 'SHA-1',
+    },
+    new TextEncoder().encode(str)
+  )
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 /**
  * Returns true if this is a host that closes *before* it ends
  */
@@ -220,8 +285,18 @@ export async function executeRequest(options: Options, postBody?: string | Buffe
     };
     const response = await fetch(options.url, fetchInit);
     if (response.ok) {
-        const data = await response.json();
-        return {data, response};
+        if (response.headers.get('content-type')?.includes('application/json')) {
+          const data = await response.json();
+          return {data, response};
+        }
+      const data = await response.text();
+      const parsedUrlSearchParams = new URLSearchParams(data);
+      const dataObj: GenericObject = {};
+      parsedUrlSearchParams.forEach((value, key) => {
+        dataObj[key] = value;
+      });
+      return {data: dataObj, response};
     }
-    return {error: response.status, data: response.statusText, response};
+
+    return {error: response.status, data: await response.text(), response};
 }

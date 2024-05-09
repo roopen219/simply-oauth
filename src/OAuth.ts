@@ -1,5 +1,3 @@
-// import * as crypto from 'node:crypto';
-import sha1 from 'crypto-js/sha1';
 import {
     GenericObject,
     OAuthResponse,
@@ -8,7 +6,8 @@ import {
     isParameterNameAnOAuthParameter,
     getTimestamp,
     createOptions,
-    getNonce, normaliseRequestParams, makeArrayOfArgumentsHash, sortRequestParams, executeRequest
+    getNonce, normaliseRequestParams, makeArrayOfArgumentsHash, sortRequestParams, executeRequest,
+    hashString
 } from './utils';
 
 export type SignatureMethod = 'PLAINTEXT' | 'HMAC-SHA1' | 'RSA-SHA1';
@@ -39,7 +38,7 @@ interface OAuthParameters {
     [index: string]: any,
     oauth_timestamp: number,
     oauth_nonce: string,
-    oauth_version: string,
+    oauth_version?: string,
     oauth_signature_method: string,
     oauth_consumer_key: string,
     oauth_token?: string,
@@ -71,6 +70,7 @@ export default class OAuth {
     private readonly oauthParameterSeparator = ',';
     protected realm: string = '';
     protected verifyCredentials: string = '';
+    protected addToQuery: boolean;
 
     constructor(requestUrl?: string, accessUrl?: string, consumerKey?: string, consumerSecret?: string, version?: string, authorize_callback: string = 'oob', signatureMethod?: SignatureMethod, nonceSize: number = 32, customHeaders?: GenericObject) {
         this.isEcho = false;
@@ -94,12 +94,17 @@ export default class OAuth {
             'User-Agent' : 'Node authentication'
         };
         this.clientOptions = this.defaultClientOptions;
+        this.addToQuery = false;
+    }
+
+    setAddToQuery(addToQuery: boolean): void {
+      this.addToQuery = addToQuery;
     }
 
     /**
      * Generates a signature
      */
-    private getSignature(method: string, url: string, parameters: string, tokenSecret: string): string {
+    private getSignature(method: string, url: string, parameters: string, tokenSecret: string): Promise<string> {
         const signatureBase = createSignatureBase(method, url, parameters);
         return this.createSignature(signatureBase, tokenSecret);
     }
@@ -126,7 +131,7 @@ export default class OAuth {
     /**
      * Create a hash signature
      */
-    createSignature(signatureBase: string, tokenSecret: string): string {
+    async createSignature(signatureBase: string, tokenSecret: string): Promise<string> {
         tokenSecret = tokenSecret ? encodeData(tokenSecret) : '';
         // consumerSecret is already encoded
         let key = `${this.consumerSecret}&${tokenSecret}`;
@@ -134,14 +139,8 @@ export default class OAuth {
         if (this.signatureMethod === 'PLAINTEXT') {
             hash = key;
         }
-        else if (this.signatureMethod === 'RSA-SHA1') {
-            key = this.privateKey || '';
-            hash = crypto.createSign('RSA-SHA1').update(signatureBase).sign(key, 'base64');
-        }
         else {
-          hash = sha1(signatureBase, key);
-          console.log(hash)
-            // hash = crypto.createHmac('sha1', key).update(signatureBase).digest('base64');
+            hash = await hashString(signatureBase, key, true, 'base64', 'SHA-1')
         }
         return hash;
     }
@@ -149,21 +148,19 @@ export default class OAuth {
     /**
      * Prepares parameters for OAuth request
      */
-    private prepareParameters(oauthToken: string, oauthTokenSecret: string, method: string, url: string, extraParams: GenericObject): string[][] {
-        const oauthParameters: OAuthParameters = {
-            oauth_timestamp: getTimestamp(),
-            oauth_nonce: getNonce(this.nonceSize),
-            oauth_version: this.version,
-            oauth_signature_method: this.signatureMethod,
+    private async prepareParameters(oauthToken: string, oauthTokenSecret: string, method: string, url: string, extraParams: GenericObject): Promise<string[][]> {
+      const oauthParameters: OAuthParameters = {
             oauth_consumer_key: this.consumerKey,
-            oauth_token: undefined,
+            oauth_signature_method: this.signatureMethod,
+            oauth_nonce: getNonce(this.nonceSize),
+            oauth_timestamp: getTimestamp(),
         };
         if (oauthToken) {
             oauthParameters.oauth_token = oauthToken;
         }
         let sig;
         if (this.isEcho) {
-            sig = this.getSignature('GET', this.verifyCredentials, normaliseRequestParams(oauthParameters), oauthTokenSecret);
+            sig = await this.getSignature('GET', this.verifyCredentials, normaliseRequestParams(oauthParameters), oauthTokenSecret);
         }
         else {
             if (extraParams) {
@@ -178,7 +175,7 @@ export default class OAuth {
                     oauthParameters[key] = value;
                 }
             }
-            sig = this.getSignature(method, url, normaliseRequestParams(oauthParameters), oauthTokenSecret);
+            sig = await this.getSignature(method, url, normaliseRequestParams(oauthParameters), oauthTokenSecret);
         }
         const orderedParameters = makeArrayOfArgumentsHash(oauthParameters);
         sortRequestParams(orderedParameters);
@@ -189,23 +186,29 @@ export default class OAuth {
     /**
      * Formats a request and sends it to an endpoint
      */
-    private prepareSecureRequest(oauthToken?: string, oauthTokenSecret?: string, method?: string, url?: string, extraParams?: GenericObject, postBody?: string | object | Buffer, postContentType?: string): PreparedRequest {
-        const orderedParameters = this.prepareParameters(oauthToken, oauthTokenSecret, method, url, extraParams);
+    private async prepareSecureRequest(oauthToken?: string, oauthTokenSecret?: string, method?: string, url?: string, extraParams?: GenericObject, postBody?: string | object | Buffer, postContentType?: string): Promise<PreparedRequest> {
+        const orderedParameters = await this.prepareParameters(oauthToken, oauthTokenSecret, method, url, extraParams);
         if (!postContentType) {
             postContentType = 'application/x-www-form-urlencoded';
         }
         const parsedUrl = new URL(url);
         const headers: Headers = {};
-        const authorization = this.buildAuthorizationHeaders(orderedParameters);
-        if (this.isEcho) {
-            headers['X-Verify-Credentials-Authorization'] = authorization;
-        }
-        else {
-            headers.Authorization = authorization;
-        }
-        headers.Host = parsedUrl.host
-        for (const key of Object.keys(this.headers)) {
-            headers[key] = this.headers[key];
+        if (!this.addToQuery) {
+          const authorization = this.buildAuthorizationHeaders(orderedParameters);
+                  if (this.isEcho) {
+                      headers['X-Verify-Credentials-Authorization'] = authorization;
+                  }
+                  else {
+                      headers.Authorization = authorization;
+                  }
+                  headers.Host = parsedUrl.host
+                  for (const key of Object.keys(this.headers)) {
+                      headers[key] = this.headers[key];
+                  }
+        } else {
+          orderedParameters.forEach(([key, value]) => {
+                    parsedUrl.searchParams.set(key, value);
+                  });
         }
         // Filter out any passed extraParams that are really to do with OAuth
         if (extraParams) {
@@ -261,16 +264,16 @@ export default class OAuth {
     /**
      * Sends an OAuth request with DELETE method
      */
-    delete(url: string, oauthToken: string, oauthTokenSecret: string): Promise<OAuthResponse> {
-        const { options, postBody } = this.prepareSecureRequest(oauthToken, oauthTokenSecret, 'DELETE', url, null, null, null);
+    async delete(url: string, oauthToken: string, oauthTokenSecret: string): Promise<OAuthResponse> {
+        const { options, postBody } = await this.prepareSecureRequest(oauthToken, oauthTokenSecret, 'DELETE', url, null, null, null);
         return executeRequest(options, postBody);
     }
 
     /**
      * Sends an OAuth request with GET method
      */
-    get(url: string, oauthToken: string, oauthTokenSecret: string): Promise<OAuthResponse> {
-        const { options, postBody } = this.prepareSecureRequest(oauthToken, oauthTokenSecret, 'GET', url, null, null, null);
+    async get(url: string, oauthToken: string, oauthTokenSecret: string): Promise<OAuthResponse> {
+        const { options, postBody } = await this.prepareSecureRequest(oauthToken, oauthTokenSecret, 'GET', url, null, null, null);
         return executeRequest(options, postBody);
     }
 
@@ -299,14 +302,14 @@ export default class OAuth {
      * @returns {Promise<{data: string, response: Object}>}
      * @private
      */
-    private putOrPost(method: string, url: string, oauthToken: string, oauthTokenSecret: string, postBody: string | object, postContentType?: string): Promise<OAuthResponse> {
+    private async putOrPost(method: string, url: string, oauthToken: string, oauthTokenSecret: string, postBody: string | object, postContentType?: string): Promise<OAuthResponse> {
         let extraParams = null;
         if (postBody instanceof Object) {
             postContentType = 'application/x-www-form-urlencoded';
             extraParams = postBody;
             postBody = null;
         }
-        const prepared = this.prepareSecureRequest(oauthToken, oauthTokenSecret, method, url, extraParams, postBody, postContentType);
+        const prepared = await this.prepareSecureRequest(oauthToken, oauthTokenSecret, method, url, extraParams, postBody, postContentType);
         return executeRequest(prepared.options, prepared.postBody);
     }
 
@@ -334,7 +337,7 @@ export default class OAuth {
         if (this.authorizeCallback) {
             extraParams.oauth_callback = this.authorizeCallback;
         }
-        const { options, postBody } = this.prepareSecureRequest(null, null, this.clientOptions.requestTokenHttpMethod, this.requestUrl, extraParams, null, null);
+        const { options, postBody } = await this.prepareSecureRequest(null, null, this.clientOptions.requestTokenHttpMethod, this.requestUrl, { ...extraParams }, null, null);
         const { error, data, response } = await executeRequest(options, postBody);
         // @ts-ignore
         const { oauth_token, oauth_token_secret } = data;
@@ -348,7 +351,7 @@ export default class OAuth {
         const extraParams = {
             oauth_verifier: oauthVerifier,
         };
-        const { options, postBody } = this.prepareSecureRequest(oauthToken, oauthTokenSecret, this.clientOptions.accessTokenHttpMethod, this.accessUrl, extraParams, null, null);
+        const { options, postBody } = await this.prepareSecureRequest(oauthToken, oauthTokenSecret, this.clientOptions.accessTokenHttpMethod, this.accessUrl, extraParams, null, null);
         const { error, data, response } = await executeRequest(options, postBody);
         // @ts-ignore
         const { oauth_token, oauth_token_secret } = data;
@@ -358,9 +361,9 @@ export default class OAuth {
     /**
      * Generates a signed URL string
      */
-    signUrl(url: string, oauthToken?: string, oauthTokenSecret?: string, method?: string): string {
+    async signUrl(url: string, oauthToken?: string, oauthTokenSecret?: string, method?: string): Promise<string> {
         method = method ? method : 'GET';
-        const orderedParameters = this.prepareParameters(oauthToken, oauthTokenSecret, method, url, {});
+        const orderedParameters = await this.prepareParameters(oauthToken, oauthTokenSecret, method, url, {});
         const parsedUrl = new URL(url);
         let query = '';
         for (let i = 0; i < orderedParameters.length; i++) {
@@ -373,9 +376,9 @@ export default class OAuth {
     /**
      * Returns the auth header string
      */
-    authHeader(url: string, oauthToken: string, oauthTokenSecret: string, method?: string): string {
+    async authHeader(url: string, oauthToken: string, oauthTokenSecret: string, method?: string): Promise<string> {
         method = method ? method : 'GET';
-        const orderedParameters = this.prepareParameters(oauthToken, oauthTokenSecret, method, url, {});
+        const orderedParameters = await this.prepareParameters(oauthToken, oauthTokenSecret, method, url, {});
         return this.buildAuthorizationHeaders(orderedParameters);
     }
 

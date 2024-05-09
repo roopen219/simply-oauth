@@ -69,8 +69,8 @@ export function normalizeUrl(url: string): string {
  * Creates a string signature base
  */
 export function createSignatureBase(method: string, url: string, parameters: string): string {
-    url = this.encodeData(this.normalizeUrl(url));
-    parameters = this.encodeData(parameters);
+    url = encodeData(normalizeUrl(url));
+    parameters = encodeData(parameters);
     return `${method.toUpperCase()}&${url}&${parameters}`;
 }
 
@@ -118,14 +118,14 @@ export function sortRequestParams(argumentPairs: any[]): void {
  * Normalizes args to request parameter format
  */
 export function normaliseRequestParams(args: GenericObject): string {
-    const argument_pairs = this.makeArrayOfArgumentsHash(args);
+    const argument_pairs = makeArrayOfArgumentsHash(args);
     // First encode them #3.4.1.3.2 .1
     for (let i = 0; i < argument_pairs.length; i++) {
-        argument_pairs[i][0] = this.encodeData(argument_pairs[i][0]);
-        argument_pairs[i][1] = this.encodeData(argument_pairs[i][1]);
+        argument_pairs[i][0] = encodeData(argument_pairs[i][0]);
+        argument_pairs[i][1] = encodeData(argument_pairs[i][1]);
     }
     // Then sort them #3.4.1.3.2 .2
-    this.sortRequestParams(argument_pairs);
+    sortRequestParams(argument_pairs);
     // Then concatenate together #3.4.1.3.2 .3 & .4
     let newArgs = '';
     for (let i = 0; i < argument_pairs.length; i++) {
@@ -153,7 +153,7 @@ export const NONCE_CHARS = [
  */
 export function getNonce(nonceSize: number): string {
     const result = [];
-    const chars = this.NONCE_CHARS;
+    const chars = NONCE_CHARS;
     let char_pos;
     const nonce_chars_length = chars.length;
     for (let i = 0; i < nonceSize; i++) {

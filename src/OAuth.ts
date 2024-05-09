@@ -1,5 +1,4 @@
 import * as crypto from 'node:crypto';
-import { URLSearchParams } from 'node:url';
 import {
     GenericObject,
     OAuthResponse,

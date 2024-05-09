@@ -1,9 +1,4 @@
-import * as http from 'node:http';
-import * as https from 'node:https';
-import { IncomingMessage } from 'http';
-import { URL } from 'node:url';
 import { ClientOptions, Options, Headers } from './OAuth';
-import fetch, { RequestInit, Response } from 'node-fetch';
 
 export interface GenericObject {
     [index: string]: any,
